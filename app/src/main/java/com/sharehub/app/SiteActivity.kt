@@ -151,6 +151,10 @@ class SiteActivity : Activity() {
         web.addJavascriptInterface(Bridge(), "AndroidShare")
 
         web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(v: WebView, url: String) {
+                site?.let { if (keepState(it) == 1) persistCookies(it) }
+            }
+
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 val u = r.url
                 val mine = site?.let { Uri.parse(it.url).host }
@@ -299,6 +303,7 @@ class SiteActivity : Activity() {
         shared = files
         injected = false
         handler.removeCallbacksAndMessages(null)
+        if (keepState(s) == -1) handler.postDelayed(keepWatch, 2000)
         if (files.isEmpty()) {
             banner.visibility = View.GONE
             web.loadUrl(s.url)
@@ -306,8 +311,13 @@ class SiteActivity : Activity() {
         }
         showBanner("Sending ${files.size} file(s) to ${s.name}. Enter the PIN if asked…")
         pollStart = System.currentTimeMillis()
-        // fresh start: any old login is dropped, so the PIN is asked on every share
-        CookieManager.getInstance().removeAllCookies { web.loadUrl(s.url) }
+        if (keepState(s) == 1) {
+            // "keep me logged in" was chosen: reuse the saved login, no PIN
+            web.loadUrl(s.url)
+        } else {
+            // otherwise start fresh, so the PIN is asked on every share
+            CookieManager.getInstance().removeAllCookies { web.loadUrl(s.url) }
+        }
         handler.postDelayed(poll, 1500)
     }
 
@@ -340,6 +350,60 @@ class SiteActivity : Activity() {
                 }
             }
         }
+    }
+
+    // --------------------------------------------------- keep me logged in
+    // -1 = not asked yet, 0 = no, 1 = yes
+    private fun keepState(s: Site): Int = getSharedPreferences("keep", 0).getInt(s.id, -1)
+
+    private fun setKeep(s: Site, v: Int) {
+        getSharedPreferences("keep", 0).edit().putInt(s.id, v).apply()
+    }
+
+    /** Makes the login cookie long-lived, so it survives closing the app. */
+    private fun persistCookies(s: Site) {
+        try {
+            val cm = CookieManager.getInstance()
+            val ck = cm.getCookie(s.url) ?: return
+            for (part in ck.split(";")) {
+                val kv = part.trim()
+                if (kv.contains("=")) cm.setCookie(s.url, "$kv; Max-Age=31536000; Path=/")
+            }
+            cm.flush()
+        } catch (e: Exception) {
+        }
+    }
+
+    // After a successful PIN login the page gets a cookie; that is the moment to ask once.
+    private val keepWatch = object : Runnable {
+        override fun run() {
+            val s = site ?: return
+            if (keepState(s) != -1) return
+            val ck = CookieManager.getInstance().getCookie(s.url)
+            if (!ck.isNullOrEmpty()) {
+                askKeep(s)
+                return
+            }
+            handler.postDelayed(this, 1500)
+        }
+    }
+
+    private fun askKeep(s: Site) {
+        AlertDialog.Builder(this)
+            .setTitle("Keep me logged in?")
+            .setMessage("No PIN again on this phone, until you remove ${s.name} or scan a new QR.")
+            .setCancelable(false)
+            .setPositiveButton("Keep me logged in") { _, _ ->
+                setKeep(s, 1)
+                persistCookies(s)
+            }
+            .setNegativeButton("No, ask every time") { _, _ -> setKeep(s, 0) }
+            .show()
+    }
+
+    override fun onPause() {
+        site?.let { if (keepState(it) == 1) persistCookies(it) }
+        super.onPause()
     }
 
     private fun showBanner(t: String, hideAfter: Long = 0) {
