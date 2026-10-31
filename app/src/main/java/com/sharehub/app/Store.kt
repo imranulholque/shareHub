@@ -57,14 +57,18 @@ object Store {
     }
 
     /** Turns "keep me logged in" on or off for one software. Off = forget the saved login. */
-    fun setKeep(ctx: Context, id: String, keep: Boolean) {
+    fun keepAsked(ctx: Context, id: String): Boolean =
+        ctx.getSharedPreferences("keepAsked", 0).getBoolean(id, false)
+
+    fun setKeep(ctx: Context, id: String, keep: Boolean, forget: Boolean = true) {
+        ctx.getSharedPreferences("keepAsked", 0).edit().putBoolean(id, true).apply()
         val l = all(ctx)
         val i = l.indexOfFirst { it.id == id }
         if (i < 0) return
         val s = l[i]
         l[i] = s.copy(keep = keep)
         save(ctx, l)
-        if (!keep) forgetLogin(s.url)
+        if (!keep && forget) forgetLogin(s.url)
     }
 
     /** Deletes the login cookie of this software, so the PIN is asked again. */
@@ -84,6 +88,7 @@ object Store {
     fun remove(ctx: Context, id: String) {
         val gone = all(ctx).firstOrNull { it.id == id }
         ctx.getSharedPreferences("keep", 0).edit().remove(id).apply()
+        ctx.getSharedPreferences("keepAsked", 0).edit().remove(id).apply()
         if (gone != null) forgetLogin(gone.url)
         save(ctx, all(ctx).filter { it.id != id })
         iconFile(ctx, id).delete()
