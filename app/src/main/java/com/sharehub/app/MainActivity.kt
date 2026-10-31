@@ -255,7 +255,7 @@ class MainActivity : Activity() {
         box.setText(def.take(30))
         box.setSingleLine()
         val cb = CheckBox(this)
-        cb.text = "Keep me logged in (PIN saved securely)"
+        cb.text = "Keep me logged in"
         cb.isChecked = true
         val wrap = LinearLayout(this)
         wrap.orientation = LinearLayout.VERTICAL

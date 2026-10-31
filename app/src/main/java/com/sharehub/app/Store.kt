@@ -20,7 +20,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class Site(val id: String, val name: String, val url: String)
+data class Site(val id: String, val name: String, val url: String, val keep: Boolean = false)
 
 object Store {
     const val CATEGORY = "com.sharehub.app.category.SHARE"
@@ -32,7 +32,9 @@ object Store {
             val arr = JSONArray(ctx.getSharedPreferences(PREFS, 0).getString("list", "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                out.add(Site(o.getString("id"), o.getString("name"), o.getString("url")))
+                val id = o.getString("id")
+                val legacy = ctx.getSharedPreferences("keep", 0).getInt(id, 0) == 1
+                out.add(Site(id, o.getString("name"), o.getString("url"), o.optBoolean("keep", legacy)))
             }
         } catch (e: Exception) {
         }
@@ -42,7 +44,7 @@ object Store {
     private fun save(ctx: Context, list: List<Site>) {
         val arr = JSONArray()
         for (s in list) {
-            arr.put(JSONObject().put("id", s.id).put("name", s.name).put("url", s.url))
+            arr.put(JSONObject().put("id", s.id).put("name", s.name).put("url", s.url).put("keep", s.keep))
         }
         ctx.getSharedPreferences(PREFS, 0).edit().putString("list", arr.toString()).apply()
     }
@@ -54,23 +56,35 @@ object Store {
         syncShortcuts(ctx)
     }
 
+    /** Turns "keep me logged in" on or off for one software. Off = forget the saved login. */
+    fun setKeep(ctx: Context, id: String, keep: Boolean) {
+        val l = all(ctx)
+        val i = l.indexOfFirst { it.id == id }
+        if (i < 0) return
+        val s = l[i]
+        l[i] = s.copy(keep = keep)
+        save(ctx, l)
+        if (!keep) forgetLogin(s.url)
+    }
+
+    /** Deletes the login cookie of this software, so the PIN is asked again. */
+    fun forgetLogin(url: String) {
+        try {
+            val cm = CookieManager.getInstance()
+            val ck = cm.getCookie(url) ?: return
+            for (part in ck.split(";")) {
+                val n = part.trim().substringBefore("=")
+                if (n.isNotEmpty()) cm.setCookie(url, "$n=; Max-Age=0; Path=/")
+            }
+            cm.flush()
+        } catch (e: Exception) {
+        }
+    }
+
     fun remove(ctx: Context, id: String) {
         val gone = all(ctx).firstOrNull { it.id == id }
         ctx.getSharedPreferences("keep", 0).edit().remove(id).apply()
-        try {
-            if (gone != null) {
-                val cm = CookieManager.getInstance()
-                val ck = cm.getCookie(gone.url)
-                if (ck != null) {
-                    for (part in ck.split(";")) {
-                        val n = part.trim().substringBefore("=")
-                        if (n.isNotEmpty()) cm.setCookie(gone.url, "$n=; Max-Age=0; Path=/")
-                    }
-                    cm.flush()
-                }
-            }
-        } catch (e: Exception) {
-        }
+        if (gone != null) forgetLogin(gone.url)
         save(ctx, all(ctx).filter { it.id != id })
         iconFile(ctx, id).delete()
         ctx.getSharedPreferences("folders", 0).edit().remove(id).apply()
