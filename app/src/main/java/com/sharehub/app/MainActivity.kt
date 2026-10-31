@@ -12,7 +12,6 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -254,20 +253,16 @@ class MainActivity : Activity() {
         val box = EditText(this)
         box.setText(def.take(30))
         box.setSingleLine()
-        val cb = CheckBox(this)
-        cb.text = "Keep me logged in"
-        cb.isChecked = true
         val wrap = LinearLayout(this)
         wrap.orientation = LinearLayout.VERTICAL
         wrap.setPadding(dp(20), dp(8), dp(20), 0)
         wrap.addView(box)
-        wrap.addView(cb)
         AlertDialog.Builder(this)
             .setTitle("Name")
             .setView(wrap)
             .setPositiveButton("Add") { _, _ ->
                 val name = box.text.toString().trim().ifEmpty { def.take(30) }
-                Store.add(this, Site(UUID.randomUUID().toString().take(8), name, url, cb.isChecked))
+                Store.add(this, Site(UUID.randomUUID().toString().take(8), name, url, false))
                 refresh()
                 toast("Added. It is now in the Share menu.")
             }
