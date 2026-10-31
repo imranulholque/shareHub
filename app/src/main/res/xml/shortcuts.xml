@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="com.sharehub.app.SiteActivity">
+        <data android:mimeType="*/*" />
+        <category android:name="com.sharehub.app.category.SHARE" />
+    </share-target>
+</shortcuts>
