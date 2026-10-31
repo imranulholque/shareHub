@@ -91,71 +91,6 @@ class SiteActivity : Activity() {
   };
 })();
 """
-
-        // Runs inside the PC software's page: remembers the PIN you type, and types it again by
-        // itself whenever the login box shows up (new session, PC restarted, ...).
-        const val LOGIN_JS = """
-(function(){
-  if (window.__shLoginOn) return;
-  window.__shLoginOn = true;
-  var filled = false, failed = false, filledAt = 0;
-  function vis(e){ return e && e.getClientRects().length > 0 && e.offsetWidth > 0; }
-  function find(){
-    var all = Array.prototype.slice.call(document.querySelectorAll('input'));
-    var c = all.filter(function(e){
-      if (!vis(e) || e.disabled || e.readOnly) return false;
-      var t = (e.type || 'text').toLowerCase();
-      if (t === 'password') return true;
-      if (t !== 'text' && t !== 'tel' && t !== 'number') return false;
-      var s = e.id + ' ' + e.name + ' ' + (e.placeholder || '') + ' ' + (e.getAttribute('aria-label') || '');
-      return /pin|pass|pwd|otp/i.test(s);
-    });
-    for (var i = 0; i < c.length; i++) if ((c[i].type || '').toLowerCase() === 'password') return c[i];
-    return c[0] || null;
-  }
-  function setVal(e, v){
-    var d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-    if (d && d.set) d.set.call(e, v); else e.value = v;
-    e.dispatchEvent(new Event('input', {bubbles: true}));
-    e.dispatchEvent(new Event('change', {bubbles: true}));
-  }
-  function submit(e){
-    var node = e, btn = null;
-    for (var d = 0; d < 6 && node && !btn; d++) {
-      node = node.parentElement;
-      if (!node) break;
-      var bs = node.querySelectorAll('button, input[type=submit], input[type=button]');
-      for (var i = 0; i < bs.length; i++) {
-        var b = bs[i], tx = (b.innerText || b.value || '');
-        if (vis(b) && !b.disabled && !/cancel|close|back|clear/i.test(tx)) { btn = b; break; }
-      }
-    }
-    if (btn) { btn.click(); return; }
-    var o = {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true};
-    e.dispatchEvent(new KeyboardEvent('keydown', o));
-    e.dispatchEvent(new KeyboardEvent('keypress', o));
-    e.dispatchEvent(new KeyboardEvent('keyup', o));
-    if (e.form && e.form.requestSubmit) { try { e.form.requestSubmit(); } catch (x) {} }
-  }
-  setInterval(function(){
-    var f = find();
-    if (!f) { filled = false; failed = false; AndroidShare.noLogin(); return; }
-    if (!f.__shHook) {
-      f.__shHook = true;
-      f.addEventListener('input', function(){ if (!window.__shAuto) AndroidShare.typed(f.value); });
-    }
-    var pin = window.__shPin || '';
-    if (pin && !filled && !failed && f.value === '') {
-      filled = true; filledAt = Date.now();
-      window.__shAuto = true; setVal(f, pin); window.__shAuto = false;
-      setTimeout(function(){ submit(f); }, 250);
-    } else if (filled && !failed && Date.now() - filledAt > 7000) {
-      failed = true;
-      AndroidShare.badLogin();
-    }
-  }, 400);
-})();
-"""
     }
 
     private lateinit var web: WebView
@@ -169,7 +104,6 @@ class SiteActivity : Activity() {
     private var pollStart = 0L
     private var chooserCb: ValueCallback<Array<Uri>>? = null
     private var pendingDl: Dl? = null
-    private var pendingPin: String? = null
 
     // ------------------------------------------------------------ setup
     override fun onCreate(b: Bundle?) {
@@ -230,28 +164,6 @@ class SiteActivity : Activity() {
                 return false
             }
 
-            override fun onPageFinished(v: WebView, url: String?) {
-                super.onPageFinished(v, url)
-                val s = site ?: return
-                if (!s.keep || url == null) return
-                if (Uri.parse(url).host != Uri.parse(s.url).host) return
-                // make the login cookie permanent (a normal session cookie dies when the app closes)
-                try {
-                    val cm = CookieManager.getInstance()
-                    val raw = cm.getCookie(url)
-                    if (raw != null) {
-                        for (part in raw.split(";")) {
-                            val kv = part.trim()
-                            if (kv.contains("=")) cm.setCookie(url, kv + "; Max-Age=31536000; Path=/")
-                        }
-                        cm.flush()
-                    }
-                } catch (e: Exception) {
-                }
-                val pin = Secure.get(this@SiteActivity, s.id) ?: ""
-                v.evaluateJavascript("window.__shPin=" + JSONObject.quote(pin) + ";" + LOGIN_JS, null)
-            }
-
             // serves the shared files to the page (same origin, so no CORS trouble)
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 val p = r.url.path ?: return null
@@ -292,11 +204,6 @@ class SiteActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (web.canGoBack()) web.goBack() else super.onBackPressed()
-    }
-
-    override fun onPause() {
-        CookieManager.getInstance().flush()
-        super.onPause()
     }
 
     override fun onDestroy() {
@@ -391,7 +298,6 @@ class SiteActivity : Activity() {
         site = s
         shared = files
         injected = false
-        pendingPin = null
         handler.removeCallbacksAndMessages(null)
         if (files.isEmpty()) {
             banner.visibility = View.GONE
@@ -400,12 +306,9 @@ class SiteActivity : Activity() {
         }
         showBanner("Sending ${files.size} file(s) to ${s.name}. Enter the PIN if asked…")
         pollStart = System.currentTimeMillis()
-        if (s.keep) {
-            web.loadUrl(s.url) // stay logged in: no PIN, upload starts straight away
-        } else {
-            CookieManager.getInstance().removeAllCookies { web.loadUrl(s.url) }
-        }
-        handler.postDelayed(poll, 300)
+        // fresh start: any old login is dropped, so the PIN is asked on every share
+        CookieManager.getInstance().removeAllCookies { web.loadUrl(s.url) }
+        handler.postDelayed(poll, 1500)
     }
 
     private val poll = object : Runnable {
@@ -420,44 +323,11 @@ class SiteActivity : Activity() {
                 arr.put(JSONObject().put("u", PREFIX + i).put("n", f.name).put("t", f.type))
             }
             web.evaluateJavascript(INJECT_JS + "window.__shTry(" + arr.toString() + ");", null)
-            handler.postDelayed(this, 350)
+            handler.postDelayed(this, 700)
         }
-    }
-
-    private fun trusted(): Boolean {
-        val s = site ?: return false
-        return Uri.parse(web.url ?: "").host == Uri.parse(s.url).host
     }
 
     inner class Bridge {
-        @JavascriptInterface
-        fun typed(v: String) {
-            runOnUiThread { if (site?.keep == true && trusted()) pendingPin = v }
-        }
-
-        @JavascriptInterface
-        fun noLogin() {
-            runOnUiThread {
-                val p = pendingPin
-                val s = site
-                if (p != null && p.isNotEmpty() && s != null && s.keep && trusted()) {
-                    Secure.put(this@SiteActivity, s.id, p)
-                    pendingPin = null
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun badLogin() {
-            runOnUiThread {
-                val s = site
-                if (s != null && trusted()) {
-                    Secure.clear(this@SiteActivity, s.id)
-                    pendingPin = null
-                }
-            }
-        }
-
         @JavascriptInterface
         fun done(n: Int, err: String) {
             runOnUiThread {
@@ -491,11 +361,26 @@ class SiteActivity : Activity() {
         return String.format(Locale.US, "%.1f %s", v, u[i])
     }
 
+    /** File name exactly as the PC sent it (never changes the extension). */
+    private fun cdName(cd: String?): String? {
+        if (cd == null) return null
+        val ic = RegexOption.IGNORE_CASE
+        val star = Regex("filename\\*\\s*=\\s*[^']*'[^']*'([^;]+)", ic).find(cd)
+        if (star != null) return Uri.decode(star.groupValues[1].trim().trim('"'))
+        val quoted = Regex("filename\\s*=\\s*\"([^\"]+)\"", ic).find(cd)
+        if (quoted != null) return quoted.groupValues[1]
+        val plain = Regex("filename\\s*=\\s*([^;]+)", ic).find(cd)
+        if (plain != null) return plain.groupValues[1].trim()
+        return null
+    }
+
     private fun fileName(url: String, cd: String?, mime: String?): String {
-        val hasCd = cd != null && cd.contains("filename", true)
-        val seg = Uri.parse(url).lastPathSegment
-        val n: String = if (hasCd || seg == null || seg.isBlank()) URLUtil.guessFileName(url, cd, mime) else seg
-        return n.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        var n = cdName(cd)
+        if (n.isNullOrBlank()) n = Uri.parse(url).lastPathSegment
+        // last resort only; guessFileName may change the extension, so no mime is passed
+        if (n.isNullOrBlank()) n = URLUtil.guessFileName(url, null, null)
+        val clean = (n ?: "file").substringAfterLast('/').substringAfterLast('\\')
+        return clean.replace(Regex("[:*?\"<>|]"), "_").ifBlank { "file" }
     }
 
     private fun realMime(name: String, mime: String?): String {
@@ -663,7 +548,7 @@ class SiteActivity : Activity() {
                     val t = opener()
                     tgt = t
                     t.os.use { os ->
-                        val buf = ByteArray(256 * 1024)
+                        val buf = ByteArray(64 * 1024)
                         var got = 0L
                         var last = -1
                         while (true) {
