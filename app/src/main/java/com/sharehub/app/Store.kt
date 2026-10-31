@@ -2,6 +2,7 @@ package com.sharehub.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.LocusId
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
@@ -13,13 +14,21 @@ import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
-data class Site(val id: String, val name: String, val url: String)
+data class Site(val id: String, val name: String, val url: String, val keep: Boolean = true)
 
 object Store {
     const val CATEGORY = "com.sharehub.app.category.SHARE"
@@ -31,7 +40,7 @@ object Store {
             val arr = JSONArray(ctx.getSharedPreferences(PREFS, 0).getString("list", "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                out.add(Site(o.getString("id"), o.getString("name"), o.getString("url")))
+                out.add(Site(o.getString("id"), o.getString("name"), o.getString("url"), o.optBoolean("keep", true)))
             }
         } catch (e: Exception) {
         }
@@ -41,7 +50,7 @@ object Store {
     private fun save(ctx: Context, list: List<Site>) {
         val arr = JSONArray()
         for (s in list) {
-            arr.put(JSONObject().put("id", s.id).put("name", s.name).put("url", s.url))
+            arr.put(JSONObject().put("id", s.id).put("name", s.name).put("url", s.url).put("keep", s.keep))
         }
         ctx.getSharedPreferences(PREFS, 0).edit().putString("list", arr.toString()).apply()
     }
@@ -56,6 +65,7 @@ object Store {
     fun remove(ctx: Context, id: String) {
         save(ctx, all(ctx).filter { it.id != id })
         iconFile(ctx, id).delete()
+        Secure.clear(ctx, id)
         ctx.getSharedPreferences("folders", 0).edit().remove(id).apply()
         syncShortcuts(ctx)
         try {
@@ -66,6 +76,11 @@ object Store {
             }
         } catch (e: Exception) {
         }
+    }
+
+    fun setKeep(ctx: Context, id: String, keep: Boolean) {
+        save(ctx, all(ctx).map { if (it.id == id) it.copy(keep = keep) else it })
+        if (!keep) Secure.clear(ctx, id)
     }
 
     // ---------------------------------------------------------- icons
@@ -131,11 +146,14 @@ object Store {
         val intent = Intent(ctx, SiteActivity::class.java)
         intent.action = Intent.ACTION_VIEW
         intent.putExtra("site", s.id)
+        // every site gets its own unique intent (Android merges shortcuts whose intents look the same)
+        intent.data = Uri.parse("sharehub://site/" + s.id)
         val b = ShortcutInfo.Builder(ctx, idPrefix + s.id)
         b.setShortLabel(s.name)
         b.setLongLabel(s.name)
         b.setIcon(Icon.createWithBitmap(iconBitmap(ctx, s)))
         b.setIntent(intent)
+        b.setLocusId(LocusId(idPrefix + s.id))
         if (idPrefix.isEmpty()) {
             // dynamic "sharing shortcut": this is what shows up in the Share menu
             b.setCategories(setOf(CATEGORY))
@@ -157,6 +175,53 @@ object Store {
             }
         } catch (e: Exception) {
         }
+    }
+}
+
+/** Saved PIN/password, encrypted with a key that never leaves the phone's hardware keystore. */
+object Secure {
+    private const val ALIAS = "sharehub_pin_key"
+    private const val PREFS = "vault"
+
+    private fun key(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        val g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        g.init(
+            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+        )
+        return g.generateKey()
+    }
+
+    fun put(ctx: Context, id: String, secret: String) {
+        try {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.ENCRYPT_MODE, key())
+            val blob = c.iv + c.doFinal(secret.toByteArray(Charsets.UTF_8))
+            ctx.getSharedPreferences(PREFS, 0).edit().putString(id, Base64.encodeToString(blob, Base64.NO_WRAP)).apply()
+        } catch (e: Exception) {
+        }
+    }
+
+    fun get(ctx: Context, id: String): String? {
+        return try {
+            val raw = ctx.getSharedPreferences(PREFS, 0).getString(id, null) ?: return null
+            val blob = Base64.decode(raw, Base64.NO_WRAP)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, blob.copyOfRange(0, 12)))
+            String(c.doFinal(blob, 12, blob.size - 12), Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun clear(ctx: Context, id: String) {
+        ctx.getSharedPreferences(PREFS, 0).edit().remove(id).apply()
     }
 }
 

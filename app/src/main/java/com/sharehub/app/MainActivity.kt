@@ -12,8 +12,10 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -67,6 +69,8 @@ class MainActivity : Activity() {
         col.addView(list)
 
         setContentView(scroll)
+        // re-publish every share icon on each start, so the Share menu is always complete
+        Thread { Store.syncShortcuts(this) }.start()
     }
 
     override fun onResume() {
@@ -141,10 +145,14 @@ class MainActivity : Activity() {
         btns.orientation = LinearLayout.HORIZONTAL
         val blp = LinearLayout.LayoutParams(MATCH, WRAP)
         blp.topMargin = dp(12)
-        card.addView(btns, blp)
+        val hs = HorizontalScrollView(this)
+        hs.isHorizontalScrollBarEnabled = false
+        hs.addView(btns)
+        card.addView(hs, blp)
         val items = listOf(
             pill("Icon", PURPLE) { pickIcon(s) },
-            pill("Home screen", GREY) { pinHome(s) },
+            pill("Home", GREY) { pinHome(s) },
+            pill(if (s.keep) "Keep login: ON" else "Keep login: OFF", if (s.keep) ACCENT else GREY) { toggleKeep(s) },
             pill("Remove", RED) { confirmRemove(s) }
         )
         for (p in items) {
@@ -160,6 +168,12 @@ class MainActivity : Activity() {
         i.action = Intent.ACTION_VIEW
         i.putExtra("site", s.id)
         startActivity(i)
+    }
+
+    private fun toggleKeep(s: Site) {
+        Store.setKeep(this, s.id, !s.keep)
+        toast(if (s.keep) "Login will be asked every time" else "You will stay logged in")
+        refresh()
     }
 
     private fun pickIcon(s: Site) {
@@ -240,15 +254,20 @@ class MainActivity : Activity() {
         val box = EditText(this)
         box.setText(def.take(30))
         box.setSingleLine()
-        val wrap = FrameLayout(this)
+        val cb = CheckBox(this)
+        cb.text = "Keep me logged in (PIN saved securely)"
+        cb.isChecked = true
+        val wrap = LinearLayout(this)
+        wrap.orientation = LinearLayout.VERTICAL
         wrap.setPadding(dp(20), dp(8), dp(20), 0)
         wrap.addView(box)
+        wrap.addView(cb)
         AlertDialog.Builder(this)
             .setTitle("Name")
             .setView(wrap)
             .setPositiveButton("Add") { _, _ ->
                 val name = box.text.toString().trim().ifEmpty { def.take(30) }
-                Store.add(this, Site(UUID.randomUUID().toString().take(8), name, url))
+                Store.add(this, Site(UUID.randomUUID().toString().take(8), name, url, cb.isChecked))
                 refresh()
                 toast("Added. It is now in the Share menu.")
             }
