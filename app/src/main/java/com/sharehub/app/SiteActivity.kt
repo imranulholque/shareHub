@@ -303,6 +303,7 @@ class SiteActivity : Activity() {
         shared = files
         injected = false
         handler.removeCallbacksAndMessages(null)
+        if (!Store.keepAsked(this, s.id) && !keepOn(s)) handler.postDelayed(keepWatch, 2000)
         if (files.isEmpty()) {
             banner.visibility = View.GONE
             web.loadUrl(s.url)
@@ -368,6 +369,36 @@ class SiteActivity : Activity() {
             cm.flush()
         } catch (e: Exception) {
         }
+    }
+
+    // After the first successful PIN login the page gets a cookie: that is the moment to ask, once.
+    private val keepWatch = object : Runnable {
+        override fun run() {
+            val s = site ?: return
+            if (Store.keepAsked(this@SiteActivity, s.id) || keepOn(s)) return
+            val ck = CookieManager.getInstance().getCookie(s.url)
+            if (!ck.isNullOrEmpty() && !isFinishing) {
+                askKeep(s)
+                return
+            }
+            handler.postDelayed(this, 1500)
+        }
+    }
+
+    private fun askKeep(s: Site) {
+        AlertDialog.Builder(this)
+            .setTitle("Keep me logged in?")
+            .setMessage("You will not need the PIN again on this phone, until you turn it off or remove ${s.name}.")
+            .setCancelable(false)
+            .setPositiveButton("Keep me logged in") { _, _ ->
+                Store.setKeep(this, s.id, true)
+                persistCookies(s)
+            }
+            .setNegativeButton("No, ask every time") { _, _ ->
+                // only remember the answer; the current session keeps working
+                Store.setKeep(this, s.id, false, false)
+            }
+            .show()
     }
 
     override fun onPause() {
