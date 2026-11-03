@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
@@ -27,7 +28,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.ArrayAdapter
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -246,15 +249,35 @@ class SiteActivity : Activity() {
         when {
             direct != null -> openSite(direct, files)
             sites.size == 1 -> openSite(sites[0], files)
-            else -> {
-                val names = sites.map { it.name }.toTypedArray()
-                AlertDialog.Builder(this)
-                    .setTitle("Send ${files.size} file(s) to…")
-                    .setItems(names) { _, w -> openSite(sites[w], files) }
-                    .setOnCancelListener { finish() }
-                    .show()
+            else -> showPicker(sites, files)
+        }
+    }
+
+    /** Lists EVERY scanned software (with its icon), however many there are. */
+    private fun showPicker(sites: List<Site>, files: List<SharedFile>) {
+        val adapter = object : ArrayAdapter<Site>(this, 0, sites) {
+            override fun getView(pos: Int, v: View?, parent: ViewGroup): View {
+                val s = getItem(pos)!!
+                val row = LinearLayout(context)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.gravity = Gravity.CENTER_VERTICAL
+                row.setPadding(dp(20), dp(10), dp(20), dp(10))
+                val img = ImageView(context)
+                img.setImageBitmap(Store.iconBitmap(context, s))
+                row.addView(img, LinearLayout.LayoutParams(dp(44), dp(44)))
+                val tv = TextView(context)
+                tv.text = s.name
+                tv.textSize = 17f
+                tv.setPadding(dp(14), 0, 0, 0)
+                row.addView(tv, LinearLayout.LayoutParams(0, WRAP, 1f))
+                return row
             }
         }
+        AlertDialog.Builder(this)
+            .setTitle("Send ${files.size} file(s) to…")
+            .setAdapter(adapter) { _, w -> openSite(sites[w], files) }
+            .setOnCancelListener { finish() }
+            .show()
     }
 
     @Suppress("DEPRECATION")
@@ -302,6 +325,7 @@ class SiteActivity : Activity() {
         site = s
         shared = files
         injected = false
+        if (files.isNotEmpty()) Store.reportUsed(this, s.id)
         handler.removeCallbacksAndMessages(null)
         if (!Store.keepAsked(this, s.id) && !keepOn(s)) handler.postDelayed(keepWatch, 2000)
         if (files.isEmpty()) {
