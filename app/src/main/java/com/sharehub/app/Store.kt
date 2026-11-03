@@ -2,6 +2,7 @@ package com.sharehub.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.LocusId
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
@@ -176,9 +177,25 @@ object Store {
             // dynamic "sharing shortcut": this is what shows up in the Share menu
             b.setCategories(setOf(CATEGORY))
             b.setRank(rank)
+            if (Build.VERSION.SDK_INT >= 29) {
+                // a unique locus id lets the Share sheet track usage of each entry separately
+                b.setLocusId(LocusId("site_" + s.id))
+            }
             if (Build.VERSION.SDK_INT >= 30) b.setLongLived(true)
         }
         return b.build()
+    }
+
+    /**
+     * Tells Android this Share target was just used, so it moves up in the Share sheet.
+     * Call it from SiteActivity when a file is shared to a software.
+     */
+    fun reportUsed(ctx: Context, id: String) {
+        try {
+            val sm = ctx.getSystemService(ShortcutManager::class.java)
+            sm?.reportShortcutUsed(id)
+        } catch (e: Exception) {
+        }
     }
 
     fun syncShortcuts(ctx: Context) {
