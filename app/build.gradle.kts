@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val buildNum = (findProperty("buildNum") as String?)?.toIntOrNull() ?: 1
+val ghRepo = (findProperty("ghRepo") as String?) ?: ""
+
 android {
     namespace = "com.sharehub.app"
     compileSdk = 34
@@ -11,8 +14,23 @@ android {
         applicationId = "com.sharehub.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNum
+        versionName = "1.$buildNum"
+        buildConfigField("String", "GH_REPO", "\"$ghRepo\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // same key on every build, so a new build installs over the old one
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
