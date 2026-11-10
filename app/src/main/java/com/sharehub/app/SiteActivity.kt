@@ -59,6 +59,8 @@ class SiteActivity : Activity() {
         const val REQ_CHOOSE = 21
         const val REQ_TREE = 22
         const val REQ_CAM = 23
+        const val REQ_CAM_FILE = 24
+        const val REQ_CAPTURE = 25
         const val PREFIX = "/__sharehub__/"
 
         // Runs inside the PC software's page: finds its "choose file" input, fills it with the
@@ -110,6 +112,8 @@ class SiteActivity : Activity() {
     private var injected = false
     private var pollStart = 0L
     private var chooserCb: ValueCallback<Array<Uri>>? = null
+    private var chooserParams: WebChromeClient.FileChooserParams? = null
+    private var captureUri: Uri? = null
     private var pendingDl: Dl? = null
 
     // ------------------------------------------------------------ setup
@@ -222,17 +226,50 @@ class SiteActivity : Activity() {
             ): Boolean {
                 chooserCb?.onReceiveValue(null)
                 chooserCb = cb
-                return try {
-                    startActivityForResult(p.createIntent(), REQ_CHOOSE)
-                    true
-                } catch (e: Exception) {
-                    chooserCb = null
-                    false
+                chooserParams = p
+                // page asked for the camera directly (<input capture>): open the camera like Chrome does
+                val wantsImage = p.acceptTypes.isEmpty() || p.acceptTypes.any { it.isEmpty() || it.startsWith("image") }
+                if (p.isCaptureEnabled && wantsImage) {
+                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                        launchCapture()
+                    } else {
+                        requestPermissions(arrayOf(Manifest.permission.CAMERA), REQ_CAM_FILE)
+                    }
+                    return true
                 }
+                return openPicker()
             }
         }
 
         web.setDownloadListener { url, ua, cd, mime, len -> onDownload(url, ua, cd, mime, len) }
+    }
+
+    private fun openPicker(): Boolean {
+        val p = chooserParams ?: return false
+        return try {
+            startActivityForResult(p.createIntent(), REQ_CHOOSE)
+            true
+        } catch (e: Exception) {
+            chooserCb?.onReceiveValue(null)
+            chooserCb = null
+            false
+        }
+    }
+
+    private fun launchCapture() {
+        try {
+            val dir = File(cacheDir, "open").apply { mkdirs() }
+            val f = File(dir, "photo_${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", f)
+            captureUri = uri
+            val i = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+            i.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivityForResult(i, REQ_CAPTURE)
+        } catch (e: Exception) {
+            toast("Camera could not open, choose a photo instead")
+            openPicker()
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -706,6 +743,15 @@ class SiteActivity : Activity() {
 
     override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, res: IntArray) {
         super.onRequestPermissionsResult(req, perms, res)
+        if (req == REQ_CAM_FILE) {
+            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                launchCapture()
+            } else {
+                toast("Camera permission denied. Choose a photo instead")
+                openPicker()
+            }
+            return
+        }
         if (req != REQ_CAM) return
         val r = pendingPerm ?: return
         pendingPerm = null
@@ -726,7 +772,12 @@ class SiteActivity : Activity() {
     // --------------------------------------------------- activity results
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req == REQ_CHOOSE) {
+        if (req == REQ_CAPTURE) {
+            val u = captureUri
+            captureUri = null
+            chooserCb?.onReceiveValue(if (res == RESULT_OK && u != null) arrayOf(u) else null)
+            chooserCb = null
+        } else if (req == REQ_CHOOSE) {
             chooserCb?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data))
             chooserCb = null
         } else if (req == REQ_TREE) {
