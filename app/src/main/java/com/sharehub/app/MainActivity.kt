@@ -63,6 +63,33 @@ class MainActivity : Activity() {
         slp.bottomMargin = dp(18)
         col.addView(scanBtn, slp)
 
+        // ---- update controls
+        val upRow = LinearLayout(this)
+        upRow.orientation = LinearLayout.HORIZONTAL
+        val autoBtn = pill("", GREY) {}
+        fun paintAuto() {
+            val on = Updater.isAuto(this)
+            autoBtn.text = if (on) "Auto update: ON" else "Auto update: OFF"
+            autoBtn.background = rounded(if (on) ACCENT else GREY, 20)
+        }
+        paintAuto()
+        autoBtn.setOnClickListener {
+            Updater.setAuto(this, !Updater.isAuto(this))
+            paintAuto()
+            if (Updater.isAuto(this)) Updater.check(this, false)
+        }
+        val chkBtn = pill("Check update", PURPLE) { Updater.check(this, true) }
+        val ulp = LinearLayout.LayoutParams(WRAP, WRAP)
+        ulp.rightMargin = dp(8)
+        upRow.addView(autoBtn, ulp)
+        upRow.addView(chkBtn)
+        val uhs = HorizontalScrollView(this)
+        uhs.isHorizontalScrollBarEnabled = false
+        uhs.addView(upRow)
+        val uhl = LinearLayout.LayoutParams(MATCH, WRAP)
+        uhl.bottomMargin = dp(16)
+        col.addView(uhs, uhl)
+
         list = LinearLayout(this)
         list.orientation = LinearLayout.VERTICAL
         col.addView(list)
@@ -75,6 +102,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        Updater.check(this, false)
     }
 
     private fun refresh() {

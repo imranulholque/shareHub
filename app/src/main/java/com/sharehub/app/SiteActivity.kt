@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ContentValues
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -20,6 +22,7 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
+import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -55,6 +58,7 @@ class SiteActivity : Activity() {
     companion object {
         const val REQ_CHOOSE = 21
         const val REQ_TREE = 22
+        const val REQ_CAM = 23
         const val PREFIX = "/__sharehub__/"
 
         // Runs inside the PC software's page: finds its "choose file" input, fills it with the
@@ -190,6 +194,29 @@ class SiteActivity : Activity() {
         }
 
         web.webChromeClient = object : WebChromeClient() {
+            // the page asked for the camera / mic (getUserMedia): ask Android, then tell the page
+            override fun onPermissionRequest(req: PermissionRequest) {
+                runOnUiThread {
+                    val need = ArrayList<String>()
+                    for (r in req.resources) {
+                        if (r == PermissionRequest.RESOURCE_VIDEO_CAPTURE) need.add(Manifest.permission.CAMERA)
+                        if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE) need.add(Manifest.permission.RECORD_AUDIO)
+                    }
+                    val missing = need.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+                    if (missing.isEmpty()) {
+                        req.grant(req.resources)
+                    } else {
+                        pendingPerm?.deny()
+                        pendingPerm = req
+                        requestPermissions(missing.toTypedArray(), REQ_CAM)
+                    }
+                }
+            }
+
+            override fun onPermissionRequestCanceled(req: PermissionRequest) {
+                if (pendingPerm === req) pendingPerm = null
+            }
+
             override fun onShowFileChooser(
                 w: WebView, cb: ValueCallback<Array<Uri>>, p: FileChooserParams
             ): Boolean {
@@ -672,6 +699,28 @@ class SiteActivity : Activity() {
                 done(ok)
             }
         }.start()
+    }
+
+    // --------------------------------------------------- camera permission result
+    private var pendingPerm: PermissionRequest? = null
+
+    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(req, perms, res)
+        if (req != REQ_CAM) return
+        val r = pendingPerm ?: return
+        pendingPerm = null
+        val camOk = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val micOk = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val ok = r.resources.filter {
+            (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE && camOk) ||
+                (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE && micOk)
+        }
+        if (ok.isEmpty()) {
+            r.deny()
+            toast("Camera permission denied. Allow it in Android Settings > Apps > Share Hub > Permissions")
+        } else {
+            r.grant(ok.toTypedArray())
+        }
     }
 
     // --------------------------------------------------- activity results
