@@ -19,7 +19,9 @@ import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.net.http.SslError
 import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
 import android.webkit.PermissionRequest
@@ -158,10 +160,19 @@ class SiteActivity : Activity() {
         s.allowFileAccess = false
         s.allowContentAccess = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.mediaPlaybackRequiresUserGesture = false      // the live camera preview (a <video>) must start by itself
         web.setBackgroundColor(BG)
         web.addJavascriptInterface(Bridge(), "AndroidShare")
 
         web.webViewClient = object : WebViewClient() {
+            // The PC software's https page has its own self-signed certificate. Chrome lets you tap "Proceed"; a WebView
+            // would silently refuse and show nothing. So: accept it ONLY for the saved software's own address inside the local network.
+            override fun onReceivedSslError(v: WebView, h: SslErrorHandler, e: SslError) {
+                val host = Uri.parse(e.url).host
+                val mine = site?.let { Uri.parse(it.url).host }
+                if (host != null && host == mine && Net.isLan(host)) h.proceed() else h.cancel()
+            }
+
             override fun onPageFinished(v: WebView, url: String) {
                 site?.let { if (keepOn(it)) persistCookies(it) }
             }
@@ -687,7 +698,7 @@ class SiteActivity : Activity() {
             var err = ""
             var tgt: Target? = null
             try {
-                val c = URL(d.url).openConnection() as HttpURLConnection
+                val c = Net.open(d.url)
                 c.connectTimeout = 8000
                 c.readTimeout = 20000
                 c.setRequestProperty("User-Agent", d.ua)
