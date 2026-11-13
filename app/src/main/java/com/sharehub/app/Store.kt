@@ -20,6 +20,13 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 data class Site(val id: String, val name: String, val url: String, val keep: Boolean = false)
 
@@ -214,10 +221,39 @@ object Store {
 }
 
 object Net {
+    /** True for an address inside the home / office network (192.168.x.x, 10.x.x.x, 172.16-31.x.x, localhost, *.local). */
+    fun isLan(host: String?): Boolean {
+        if (host == null) return false
+        if (host == "localhost" || host.endsWith(".local")) return true
+        val p = host.split(".").mapNotNull { it.toIntOrNull() }
+        if (p.size != 4) return false
+        return p[0] == 10 || p[0] == 127 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && p[1] in 16..31)
+    }
+
+    @Suppress("CustomX509TrustManager", "TrustAllX509TrustManager")
+    private val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    })
+
+    /** Opens a connection. The PC software's page is https with its own (self-signed) certificate: for an address
+     *  inside the local network that certificate is accepted, for every other address the normal checks stay on. */
+    fun open(url: String): HttpURLConnection {
+        val c = URL(url).openConnection() as HttpURLConnection
+        if (c is HttpsURLConnection && isLan(c.url.host)) {
+            val ctx = SSLContext.getInstance("TLS")
+            ctx.init(null, trustAll, SecureRandom())
+            c.sslSocketFactory = ctx.socketFactory
+            c.hostnameVerifier = HostnameVerifier { _, _ -> true }
+        }
+        return c
+    }
+
     /** Reads the <title> of the PC software's page, to use as its name. */
     fun title(url: String): String? {
         return try {
-            val c = URL(url).openConnection() as HttpURLConnection
+            val c = open(url)
             c.connectTimeout = 4000
             c.readTimeout = 4000
             val buf = ByteArray(24000)
